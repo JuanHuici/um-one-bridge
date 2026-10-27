@@ -87,10 +87,9 @@
 				LastUpgradeCheck = 2710;
 			};
 			buildConfigurationList = A10000000000000000000040 /* Build configuration list for PBXProject "UMONEBridge" */;
-			developmentRegion = es;
+			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
-				es,
 				en,
 				Base,
 			);

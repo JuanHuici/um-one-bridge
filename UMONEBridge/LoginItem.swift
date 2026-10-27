@@ -2,7 +2,7 @@ import os
 import ServiceManagement
 import UMOneCore
 
-/// "Iniciar al abrir sesión" through SMAppService. Works best when the app lives in /Applications.
+/// "Launch at Login" through SMAppService. Works best when the app lives in /Applications.
 enum LoginItem {
     private static let log = Logger(subsystem: Log.subsystem, category: "app")
 

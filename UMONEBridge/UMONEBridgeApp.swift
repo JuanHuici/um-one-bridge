@@ -25,7 +25,7 @@ private struct MenuContent: View {
             Text("Error: \(error)")
         }
         if model.ports.isEmpty {
-            Text("No hay ningún UM-ONE conectado")
+            Text("No UM-ONE connected")
         }
         ForEach(model.ports) { port in
             Text("\(port.name) — \(port.state.label)")
@@ -35,18 +35,18 @@ private struct MenuContent: View {
             }
         }
         Divider()
-        Toggle("Modo verbose (paquetes USB al log)", isOn: $model.verbose)
-        Toggle("Iniciar al abrir sesión", isOn: Binding(
+        Toggle("Verbose Mode (Log Raw USB Packets)", isOn: $model.verbose)
+        Toggle("Launch at Login", isOn: Binding(
             get: { model.launchAtLogin },
             set: { model.setLaunchAtLogin($0) }))
         if model.loginItemNeedsApproval {
-            Button("Aprobar en Configuración del Sistema…") { LoginItem.openSettings() }
+            Button("Approve in System Settings…") { LoginItem.openSettings() }
         }
-        Button("Abrir Configuración de Audio MIDI") {
+        Button("Open Audio MIDI Setup") {
             NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Audio MIDI Setup.app"))
         }
         Divider()
-        Button("Salir") { NSApplication.shared.terminate(nil) }
+        Button("Quit UM-ONE Bridge") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }
 }
@@ -54,9 +54,9 @@ private struct MenuContent: View {
 extension MIDIPort.State {
     var label: String {
         switch self {
-        case .waiting: "desconectado"
-        case .configuring: "configurando…"
-        case .connected: "conectado"
+        case .waiting: "disconnected"
+        case .configuring: "configuring…"
+        case .connected: "connected"
         case .error: "error"
         }
     }
