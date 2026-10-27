@@ -1,0 +1,6 @@
+build/
+Packages/UMOneCore/.build/
+xcuserdata/
+.DS_Store
+dist/
+.swiftpm/
