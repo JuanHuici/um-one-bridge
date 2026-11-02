@@ -14,6 +14,9 @@ public final class UMOneConnection: @unchecked Sendable {
     public enum Direction: Sendable { case input, output }
 
     public let locationID: UInt32
+    /// Registry entry IDs of the interface and its device. A re-enumerated UM-ONE gets new ones.
+    public let interfaceID: UInt64
+    public let deviceID: UInt64
     public let queue: DispatchQueue
 
     /// Called on `queue` with the bytes of every completed bulk IN transfer and its host time.
@@ -49,6 +52,14 @@ public final class UMOneConnection: @unchecked Sendable {
     /// Opens `interfaceService` (an IOUSBHostInterface, interface 0) and both pipes.
     public init(interfaceService: io_service_t, locationID: UInt32) throws {
         self.locationID = locationID
+        interfaceID = Registry.registryID(interfaceService)
+        var parent: io_registry_entry_t = 0
+        if IORegistryEntryGetParentEntry(interfaceService, kIOServicePlane, &parent) == KERN_SUCCESS {
+            deviceID = Registry.registryID(parent)
+            IOObjectRelease(parent)
+        } else {
+            deviceID = 0
+        }
         queue = DispatchQueue(label: String(format: "umone.usb.%08x", locationID), qos: .userInteractive)
 
         // The interest handler runs on an internal queue; it only needs a weak hop to ours.
@@ -57,7 +68,7 @@ public final class UMOneConnection: @unchecked Sendable {
             __ioService: interfaceService, options: [], queue: queue,
             interestHandler: { _, messageType, _ in
                 guard messageType == kIOMessageServiceIsTerminatedValue, let connection = owner.value else { return }
-                connection.queue.async { connection.close(reason: "interface terminated") }
+                connection.queue.async { connection.closeFromIO(reason: "interface terminated") }
             })
         do {
             inPipe = try interface.copyPipe(withAddress: UMOne.bulkInAddress)
@@ -109,7 +120,7 @@ public final class UMOneConnection: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         guard !closed else { return }
         closed = true
-        log.info("\(self.tag, privacy: .public) closing: \(reason, privacy: .public)")
+        log.notice("\(self.tag, privacy: .public) closing: \(reason, privacy: .public)")
         try? inPipe.__abort(with: .asynchronous)
         try? outPipe.__abort(with: .asynchronous)
         outQueue.removeAll()
@@ -121,6 +132,20 @@ public final class UMOneConnection: @unchecked Sendable {
     }
 
     private var tag: String { String(format: "[%08x]", locationID) }
+
+    /// Close triggered by the device going away or I/O failing. Call on `queue`.
+    func closeFromIO(reason: String) {
+        #if DEBUG
+        // Test hook: delay the close so a re-enumerated interface arrives before this one is
+        // gone, reproducing the race seen in the field.
+        if let delay = ProcessInfo.processInfo.environment["UMONE_DEBUG_CLOSE_DELAY"].flatMap(Double.init), delay > 0 {
+            log.notice("\(self.tag, privacy: .public) delaying close by \(delay)s (debug)")
+            queue.asyncAfter(deadline: .now() + delay) { [self] in close(reason: reason) }
+            return
+        }
+        #endif
+        close(reason: reason)
+    }
 
     private func enqueueRead(_ index: Int) throws {
         try inPipe.enqueueIORequest(with: readBuffers[index], completionTimeout: 0) { [weak self] status, count in
@@ -142,7 +167,7 @@ public final class UMOneConnection: @unchecked Sendable {
                 onInput?(bytes, now)
             }
         case kIOReturnAborted, kIOReturnNoDevice, kIOReturnNotResponding, kIOReturnOffline, kIOReturnNotOpen:
-            close(reason: "read: \(ioReturnString(status))")
+            closeFromIO(reason: "read: \(ioReturnString(status))")
             return
         case kUSBHostReturnPipeStalledStatus, kIOUSBPipeStalledStatus:
             log.error("\(self.tag, privacy: .public) IN pipe stalled, clearing")
@@ -151,14 +176,14 @@ public final class UMOneConnection: @unchecked Sendable {
             consecutiveReadErrors += 1
             log.error("\(self.tag, privacy: .public) read error \(ioReturnString(status), privacy: .public)")
             if consecutiveReadErrors > 20 {
-                close(reason: "too many read errors")
+                closeFromIO(reason: "too many read errors")
                 return
             }
         }
         do {
             try enqueueRead(index)
         } catch {
-            close(reason: "re-enqueue read: \(error.localizedDescription)")
+            closeFromIO(reason: "re-enqueue read: \(error.localizedDescription)")
         }
     }
 
@@ -189,7 +214,7 @@ public final class UMOneConnection: @unchecked Sendable {
         case kIOReturnSuccess:
             rawObserver?(.output, UnsafeRawBufferPointer(start: chunk.bytes, count: sent))
         case kIOReturnAborted, kIOReturnNoDevice, kIOReturnNotResponding, kIOReturnOffline, kIOReturnNotOpen:
-            close(reason: "write: \(ioReturnString(status))")
+            closeFromIO(reason: "write: \(ioReturnString(status))")
             return
         case kUSBHostReturnPipeStalledStatus, kIOUSBPipeStalledStatus:
             log.error("\(self.tag, privacy: .public) OUT pipe stalled, clearing")

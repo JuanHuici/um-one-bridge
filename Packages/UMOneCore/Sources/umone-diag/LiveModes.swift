@@ -35,7 +35,7 @@ private func watch(location: UInt32?, onConnected: @escaping @Sendable (UMOneCon
             connection.queue.sync {
                 connection.onClose = { reason in
                     print("\(stamp()) [\(hex32(connection.locationID))] closed: \(reason)")
-                    box.manager?.connectionClosed(locationID: connection.locationID)
+                    box.manager?.connectionClosed(connection)
                 }
             }
             print("\(stamp()) [\(hex32(connection.locationID))] interface open")

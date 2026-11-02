@@ -23,8 +23,10 @@ public final class DeviceManager: @unchecked Sendable {
 
     private var port: IONotificationPortRef?
     private var iterators: [io_iterator_t] = []
-    /// Locations with an open connection, so a re-delivered interface is not opened twice.
-    private var openLocations: Set<UInt32> = []
+    /// The open connection per location. A UM-ONE that re-enumerates publishes a new interface
+    /// (new registry ID) that can arrive before the old connection has noticed it is dead, so
+    /// arrivals are matched by interface ID rather than by location.
+    private var open: [UInt32: UMOneConnection] = [:]
 
     public init(handler: @escaping @Sendable (Event) -> Void) {
         self.handler = handler
@@ -54,9 +56,21 @@ public final class DeviceManager: @unchecked Sendable {
         port = nil
     }
 
-    /// Called by the owner when a connection it received has closed.
-    public func connectionClosed(locationID: UInt32) {
-        queue.async { [self] in openLocations.remove(locationID) }
+    /// Called by the owner when a connection it received has closed. If an interface is already
+    /// waiting at that location (its arrival notification has passed), it is opened now.
+    public func connectionClosed(_ connection: UMOneConnection) {
+        queue.async { [self] in
+            let location = connection.locationID
+            guard open[location] === connection else { return }
+            open[location] = nil
+            for service in Registry.services(matching: UMOne.interfaceMatching()) {
+                defer { IOObjectRelease(service) }
+                if Registry.locationID(service) == location, open[location] == nil {
+                    log.notice("\(Self.tag(location), privacy: .public) interface already present, reopening")
+                    openInterface(service, location: location)
+                }
+            }
+        }
     }
 
     private typealias Arrival = (DeviceManager, io_iterator_t) -> Void
@@ -95,6 +109,7 @@ public final class DeviceManager: @unchecked Sendable {
         for service in Registry.drain(iterator) {
             defer { IOObjectRelease(service) }
             guard let location = Registry.locationID(service) else { continue }
+            log.notice("\(Self.tag(location), privacy: .public) device arrived")
             handler(.deviceArrived(locationID: location))
             if Registry.intProperty(service, "kUSBCurrentConfiguration") == UMOne.configurationValue {
                 log.info("\(Self.tag(location), privacy: .public) already configured")
@@ -113,7 +128,7 @@ public final class DeviceManager: @unchecked Sendable {
             let device = try IOUSBHostDevice(__ioService: service, options: [], queue: queue, interestHandler: nil)
             defer { device.destroy() }
             try device.__configure(withValue: UMOne.configurationValue, matchInterfaces: true)
-            log.info("\(Self.tag(location), privacy: .public) configured")
+            log.notice("\(Self.tag(location), privacy: .public) configured")
         } catch {
             let status = IOReturn(truncatingIfNeeded: (error as NSError).code)
             if status == kIOReturnExclusiveAccess, attempt < Self.configureRetryDelays.count {
@@ -140,7 +155,12 @@ public final class DeviceManager: @unchecked Sendable {
             defer { IOObjectRelease(service) }
             // The registry may already have dropped the parent link; fall back to the device's own property.
             guard let location = Registry.locationID(service) else { continue }
-            log.info("\(Self.tag(location), privacy: .public) removed")
+            log.notice("\(Self.tag(location), privacy: .public) device removed")
+            // Do not wait for the interface's own termination message to close its connection.
+            let deviceID = Registry.registryID(service)
+            if let connection = open[location], connection.deviceID == deviceID {
+                connection.queue.async { connection.closeFromIO(reason: "device removed") }
+            }
             handler(.deviceRemoved(locationID: location))
         }
     }
@@ -148,17 +168,27 @@ public final class DeviceManager: @unchecked Sendable {
     private func interfacesArrived(_ iterator: io_iterator_t) {
         for service in Registry.drain(iterator) {
             defer { IOObjectRelease(service) }
-            guard let location = Registry.locationID(service), !openLocations.contains(location) else { continue }
-            do {
-                let connection = try UMOneConnection(interfaceService: service, locationID: location)
-                openLocations.insert(location)
-                log.info("\(Self.tag(location), privacy: .public) interface opened")
-                handler(.connected(connection))
-            } catch {
-                let message = "open interface failed: \(describeIOError(error))"
-                log.error("\(Self.tag(location), privacy: .public) \(message, privacy: .public)")
-                handler(.failed(locationID: location, message: message))
+            guard let location = Registry.locationID(service) else { continue }
+            if let existing = open[location] {
+                if existing.interfaceID == Registry.registryID(service) { continue } // re-delivered
+                log.notice("\(Self.tag(location), privacy: .public) new interface replaces a stale connection")
+                open[location] = nil
+                existing.queue.async { existing.close(reason: "replaced by re-enumerated interface") }
             }
+            openInterface(service, location: location)
+        }
+    }
+
+    private func openInterface(_ service: io_service_t, location: UInt32) {
+        do {
+            let connection = try UMOneConnection(interfaceService: service, locationID: location)
+            open[location] = connection
+            log.notice("\(Self.tag(location), privacy: .public) interface opened")
+            handler(.connected(connection))
+        } catch {
+            let message = "open interface failed: \(describeIOError(error))"
+            log.error("\(Self.tag(location), privacy: .public) \(message, privacy: .public)")
+            handler(.failed(locationID: location, message: message))
         }
     }
 

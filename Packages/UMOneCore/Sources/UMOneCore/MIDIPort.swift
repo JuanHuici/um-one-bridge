@@ -103,13 +103,20 @@ public final class MIDIPort: @unchecked Sendable {
         return true
     }
 
-    func detach(reason: String) {
-        lock.withLock {
-            connection = nil
+    /// Detaches `connection` if it is still the current one; a replacement may already be attached.
+    func detach(_ connection: UMOneConnection, reason: String) {
+        let wasCurrent = lock.withLock {
+            guard self.connection === connection else { return false }
+            self.connection = nil
             if _state == .connected { _state = .waiting }
+            return true
+        }
+        guard wasCurrent else {
+            log.notice("\(self.name, privacy: .public) stale connection closed: \(reason, privacy: .public)")
+            return
         }
         setOffline(true)
-        log.info("\(self.name, privacy: .public) detached: \(reason, privacy: .public)")
+        log.notice("\(self.name, privacy: .public) detached: \(reason, privacy: .public)")
     }
 
     private func setOffline(_ offline: Bool) {

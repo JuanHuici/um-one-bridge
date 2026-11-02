@@ -104,18 +104,18 @@ public final class BridgeService: @unchecked Sendable {
                 connection.queue.async { connection.close(reason: "no MIDI endpoints") }
                 return
             }
-            let location = connection.locationID
-            let attached = port.attach(connection) { [weak self, weak port] reason in
-                port?.detach(reason: reason)
-                self?.manager.connectionClosed(locationID: location)
+            let attached = port.attach(connection) { [weak self, weak port, weak connection] reason in
+                guard let connection else { return }
+                port?.detach(connection, reason: reason)
+                self?.manager.connectionClosed(connection)
                 self?.onChange?()
             }
             guard attached else {
-                manager.connectionClosed(locationID: location)
+                manager.connectionClosed(connection)
                 return
             }
             connection.start()
-            log.info("\(port.name, privacy: .public) online")
+            log.notice("\(port.name, privacy: .public) online")
         }
         onChange?()
     }
