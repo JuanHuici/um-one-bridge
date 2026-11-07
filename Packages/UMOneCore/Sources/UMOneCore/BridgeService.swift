@@ -76,10 +76,21 @@ public final class BridgeService: @unchecked Sendable {
     /// Returns the port for a location, creating its endpoints the first time. Manager queue only.
     private func port(for location: UInt32) -> MIDIPort? {
         if let existing = lock.withLock({ ports[location] }) { return existing }
-        var slots = self.slots
-        let index = slots[location] ?? (1...).first { !Set(slots.values).contains($0) }!
-        slots[location] = index
-        self.slots = slots
+        let present = Registry.services(matching: UMOne.deviceMatching()).compactMap { service in
+            defer { IOObjectRelease(service) }
+            return Registry.locationID(service)
+        }
+        let connected = lock.withLock { ports.filter { $0.value.state == .connected }.keys }
+        var slots = PortSlots(byLocation: self.slots)
+        let (index, replaced) = slots.assign(location, busy: Set(present).union(connected))
+        self.slots = slots.byLocation
+        if let replaced, let port = lock.withLock({ ports.removeValue(forKey: replaced) }) {
+            port.rebind(to: location)
+            lock.withLock { ports[location] = port }
+            log.notice("\(port.name, privacy: .public) moved from \(String(format: "0x%08x", replaced), privacy: .public) to \(String(format: "0x%08x", location), privacy: .public)")
+            onChange?()
+            return port
+        }
         do {
             let port = try MIDIPort(client: client, index: index, locationID: location, options: options)
             lock.withLock { ports[location] = port }

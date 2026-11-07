@@ -13,7 +13,7 @@ The **UM-ONE mk2** does not need this: Roland still provides a current driver fo
 ## Features
 
 - Several UM-ONEs at once, each exposed as a MIDI source and destination named "UM-ONE 1", "UM-ONE 2"…
-- Stable names and MIDI IDs per USB port, so your DAW keeps its routing across launches and replugs.
+- Stable names and MIDI IDs per USB port, so your DAW keeps its routing across launches, replugs and moves to another port.
 - Hot-plug: unplug and replug at any time; the ports go offline and come back on their own.
 - Full MIDI 1.0: notes and controllers, SysEx of any length, System Common and Real-Time messages.
 - Menu with each device's status and message counters, a launch-at-login option and a verbose mode that logs raw USB packets.
@@ -83,7 +83,9 @@ Verbose mode (from the menu or `--verbose`) sends raw packets to os_log, categor
 ## Notes
 
 - Names follow the **USB port** (`locationID`), not the unit: the UM-ONE has no serial number.
-  If you swap two UM-ONEs between ports, their names swap too.
+  If you swap two UM-ONEs between ports, their names swap too. A UM-ONE on a port not used before
+  takes the lowest name that has nothing plugged in, so moving one keeps its name when it is the only
+  one away. If two are away at once, they can trade names.
 - `--dump`, `--send-note` and `--headless` need exclusive access to the interface: quit the app first.
 
 ## Acknowledgements

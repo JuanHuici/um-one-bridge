@@ -3,7 +3,8 @@ import Foundation
 import os
 import Synchronization
 
-/// One virtual source + destination pair ("UM-ONE n") bound to a USB location.
+/// One virtual source + destination pair ("UM-ONE n") bound to a USB location, which changes
+/// only when another location takes the slot over.
 ///
 /// The endpoints live for the whole process; a `UMOneConnection` is attached while the
 /// device is present and detached when it goes away.
@@ -17,18 +18,19 @@ public final class MIDIPort: @unchecked Sendable {
 
     public let index: Int
     public let name: String
-    public let locationID: UInt32
+    public var locationID: UInt32 { lock.withLock { _locationID } }
     public let messagesIn = Atomic<UInt64>(0)
     public let messagesOut = Atomic<UInt64>(0)
 
     let source: MIDIEndpointRef
     let destination: MIDIEndpointRef
 
-    /// Guards `connection`, `outbound` and `_state`, which the CoreMIDI read thread also touches.
+    /// Guards `connection`, `outbound`, `_state` and `_locationID`, which the CoreMIDI read thread also touches.
     private let lock = NSLock()
     private var connection: UMOneConnection?
     private var outbound = UMPToUSBConverter()
     private var _state: State = .waiting
+    private var _locationID: UInt32
     /// Confined to the attached connection's queue.
     private var inbound = USBToUMPConverter()
     private var inboundWords: [UInt32] = []
@@ -38,7 +40,7 @@ public final class MIDIPort: @unchecked Sendable {
 
     init(client: MIDIClientRef, index: Int, locationID: UInt32, options: BridgeOptions) throws {
         self.index = index
-        self.locationID = locationID
+        _locationID = locationID
         self.options = options
         name = "UM-ONE \(index)"
         inboundWords.reserveCapacity(64)
@@ -81,6 +83,10 @@ public final class MIDIPort: @unchecked Sendable {
 
     func setState(_ state: State) {
         lock.withLock { _state = state }
+    }
+
+    func rebind(to location: UInt32) {
+        lock.withLock { _locationID = location }
     }
 
     /// Wires `connection` to this port. Returns false if it already closed.
